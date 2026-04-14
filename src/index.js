@@ -19,7 +19,7 @@ app.use(express.urlencoded({ extended: true }));
 // HEALTH CHECK
 // ========================
 app.get('/health', (req, res) => {
-  res.json({ ok: true, status: 'healthy' });
+  res.json({ ok: true, db: dbReady, status: dbReady ? 'ready' : 'starting' });
 });
 
 // ========================
@@ -49,34 +49,40 @@ app.use((err, req, res, next) => {
 // ========================
 // INICIAR SERVIDOR
 // ========================
-const startServer = async () => {
-  const MAX_RETRIES = 5;
+
+// Estado de la DB — Railway usa /health para saber si el proceso responde
+let dbReady = false;
+
+const connectDB = async () => {
+  const MAX_RETRIES = 10;
   const RETRY_DELAY_MS = 5000;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      console.log(`🔄 Intento ${attempt}/${MAX_RETRIES} — conectando a la base de datos...`);
+      console.log(`🔄 [DB] Intento ${attempt}/${MAX_RETRIES} — conectando...`);
       await sequelize.authenticate();
-      console.log('✅ Conexión a base de datos establecida');
+      console.log('✅ [DB] Conexion establecida');
       await sequelize.sync({ force: false });
-      console.log('✅ Modelos sincronizados');
-      app.listen(PORT, '0.0.0.0', () => {
-        console.log(`🚀 Servidor corriendo en http://0.0.0.0:${PORT}`);
-        console.log(`📊 Entorno: ${process.env.NODE_ENV || 'development'}`);
-      });
-      return; // éxito — salir del loop
+      console.log('✅ [DB] Modelos sincronizados');
+      dbReady = true;
+      return;
     } catch (error) {
-      console.error(`❌ Error en intento ${attempt}:`, error.message);
+      console.error(`❌ [DB] Error en intento ${attempt}:`, error.message);
       if (attempt < MAX_RETRIES) {
-        console.log(`⏳ Reintentando en ${RETRY_DELAY_MS / 1000}s...`);
+        console.log(`⏳ [DB] Reintentando en ${RETRY_DELAY_MS / 1000}s...`);
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
       } else {
-        console.error('❌ No se pudo conectar a la base de datos después de', MAX_RETRIES, 'intentos.');
-        console.error('Stack:', error.stack);
-        process.exit(1);
+        console.error('❌ [DB] Sin conexion tras', MAX_RETRIES, 'intentos.');
       }
     }
   }
 };
 
-startServer();
+// 1 — Levantar HTTP primero para que Railway no mate el proceso
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Servidor HTTP corriendo en http://0.0.0.0:${PORT}`);
+  console.log(`📊 Entorno: ${process.env.NODE_ENV || 'development'}`);
+});
+
+// 2 — Conectar DB en segundo plano
+connectDB();
